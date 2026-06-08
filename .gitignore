@@ -1,0 +1,25 @@
+# Secrets — NEVER commit your RPC/API keys
+.env
+.env.local
+*.key
+
+# Generated output (snapshots, claimers, pools, timeseries, Dune CSV, caches)
+/data/
+
+# Reference dataset (local validation only)
+/_ref/
+
+# Compiled binaries
+*.exe
+/aora
+/dist/
+
+# Go build/test artifacts
+*.test
+*.out
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+*~
