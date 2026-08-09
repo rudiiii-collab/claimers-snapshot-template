@@ -1,0 +1,138 @@
+================================================================
+PANDUAN PENGGUNAAN — CLAIMERS SNAPSHOT WEB APP
+https://claimers-snapshot.pages.dev
+================================================================
+
+Web app ini menjalankan pipeline "claimers snapshot" (repo ini) langsung
+di browser: claimed (kumulatif), Hold, LP (v2 / CL Slipstream), dan
+outflow = claimed - Hold - LP, lalu menampilkan chart stacked-area
+(LP biru, Hold hijau, Outflow merah), tabel per-wallet, dan CSV siap
+upload ke Dune. Semua komputasi terjadi di browser — RPC key Anda tidak
+pernah meninggalkan halaman.
+
+
+----------------------------------------------------------------
+A. CARA PAKAI (RUN PERTAMA — CONTOH TEA SUDAH TERISI)
+----------------------------------------------------------------
+
+1. Buka https://claimers-snapshot.pages.dev
+   Kunjungan pertama otomatis terisi contoh $TEA di Base yang sudah
+   terbukti jalan.
+
+2. Cek dua field RPC:
+   - Archive RPC : untuk baca saldo/posisi LP di block lama.
+     Default https://mainnet.base.org (gratis, tanpa key) cukup untuk
+     run kecil. Untuk run besar/berulang, pakai Alchemy key Anda:
+     https://base-mainnet.g.alchemy.com/v2/KEY (base.org rate-limited).
+   - Logs RPC : untuk scan event claim. Biarkan mainnet.base.org.
+     JANGAN isi Alchemy di sini — Alchemy membatasi getLogs ~10 block,
+     scan jadi sangat lambat.
+
+3. Klik "Run snapshots" dan biarkan tab terbuka.
+   Progress bar menunjukkan fase: claim scan -> claimers -> pools ->
+   snapshot n/N. 50 snapshot kira-kira 1-3 menit.
+
+4. Hasil:
+   - Chart stacked-area: hover untuk angka per snapshot; envelope
+     "claimed" menanjak dari 0 (bentuk AORA).
+   - Per-wallet detail: pilih block dari dropdown; tabel berisi
+     claimed / hold / LP / outflow per wallet (urut claimed terbesar).
+   - "Download Dune CSV" -> upload ke Dune (Create -> Upload data,
+     pakai NAMA TABEL BARU), lalu query:
+        SELECT b.time, SUM(d.<sym>_lp), SUM(d.<sym>_hold), SUM(d.outflow)
+        FROM dune.<handle>.<tabel> d JOIN base.blocks b ON b.number=d.block
+        GROUP BY 1 ORDER BY 1
+     Chart di Dune: stacked area. (Angka CSV selalu plain decimal,
+     tidak pernah notasi ilmiah — aman untuk tipe kolom Dune.)
+   - "Download timeseries CSV" untuk agregat per block.
+
+5. Fitur penting:
+   - Cancel / tutup tab kapan saja: block yang selesai tersimpan di
+     cache browser (IndexedDB); run berikutnya melanjutkan otomatis.
+   - Config tersimpan otomatis — reload tidak menghapus isian.
+   - Advanced -> "Force recompute" mengabaikan cache;
+     "Clear cache" menghapus semua cache lokal.
+   - Mengubah Min claimed / daftar pool otomatis meng-invalidate
+     cache yang relevan.
+
+
+----------------------------------------------------------------
+B. REUSE UNTUK TOKEN LAIN
+----------------------------------------------------------------
+
+LANGKAH 1 — Kumpulkan 4 data:
+  1. Token contract      : dari Dexscreener / explorer.
+  2. Bribe/VotingReward  : kontrak yang DIPANGGIL wallet saat claim.
+                           Buka satu transaksi claim di Basescan,
+                           lihat kontrak tujuan + event log-nya.
+  3. Pool address        : dari Dexscreener — atau kosongkan dan pakai
+                           tombol "Discover pools".
+  4. Block range         : block launch/mulai reward -> sekarang
+                           (konversi tanggal->block via explorer).
+
+LANGKAH 2 — Isi form:
+  1. Paste Token contract -> klik "Auto-detect" (decimals + symbol
+     terisi sendiri; label chart & nama file CSV mengikuti symbol).
+  2. Isi Bribe/VotingReward dan Pool(s) (boleh beberapa, pisah koma;
+     v2 vs CL dan sisi token0/token1 terdeteksi OTOMATIS).
+  3. Isi Start/End block, Step (3600 = ~2 jam di Base; target ideal
+     30-100 snapshot, lihat catatan "≈ N snapshots"), Min claimed.
+  4. Claimer source:
+     - "Scan claim events" (default): otomatis dari on-chain.
+     - "Upload CSV": kolom yang dikenali: wallet + claimed /
+       claimed_decimal / claimed_raw. Wallet duplikat otomatis
+       dijumlahkan SEBELUM filter Min claimed.
+  5. Jalankan RANGE KECIL dulu (end = start + 2-3 step), cek angka
+     Hold satu wallet vs explorer, baru full range. Cache membuat
+     block yang sudah dihitung tidak diulang.
+
+LANGKAH 3 — WAJIB DICEK (asumsi Tier-2, sama seperti ADAPTING.md):
+
+  !! EVENT CLAIM. App mengasumsikan event gaya Aerodrome/Velodrome:
+     ClaimRewards(address indexed from, address indexed reward,
+                  uint256 amount)
+     Cara cek: buka transaksi claim di explorer -> tab Logs -> event
+     dari kontrak bribe harus punya 3 topics (sig + wallet + reward)
+     dan amount di data.
+     - Nama/parameter beda tapi LAYOUT sama -> cukup ganti
+       Advanced -> "Claim event signature" (topic0 dihitung otomatis).
+     - Layout beda (mis. Merkle "Claimed(index,account,amount)") ->
+       hasil akan kosong/salah; butuh perubahan kode (batasan yang
+       sama dengan tool Go).
+
+  !! CL POOL DEX LAIN. Resolusi gauge (staked LP) memakai interface
+     Aerodrome/Velodrome Slipstream (Voter.gauges -> gauge.nft ->
+     stakedValues). Uniswap-V3 murni / Pancake-V3 berbeda.
+     Pool v2 biasa AMAN di DEX mana pun.
+
+LANGKAH 4 — Beda chain (bukan Base):
+  - Chain -> "Custom / other EVM".
+  - Isi Archive RPC + Logs RPC chain tersebut (Alchemy free punya
+    archive di kebanyakan chain).
+  - Advanced -> ganti Pool factory & Voter sesuai DEX (mis. Velodrome
+    di Optimism). Keduanya hanya dipakai untuk Discover pools dan
+    resolusi gauge — kalau pool diisi manual dan pool-nya v2, boleh
+    dikosongkan.
+  - Multicall3 tidak perlu diubah (alamat sama di hampir semua chain).
+
+
+----------------------------------------------------------------
+C. RINGKASAN MENTAL MODEL
+----------------------------------------------------------------
+
+Semua field di form = .env di tool Go. Perubahan "env-only" (alamat,
+range, filter) cukup dari browser tanpa menyentuh kode. Yang tetap
+butuh kode hanya dua asumsi Tier-2: layout event claim non-Aerodrome
+dan mekanisme staking CL non-Slipstream — persis batasan pipeline Go
+aslinya.
+
+Deploy ulang app (setelah ubah kode):
+  cd web && npx wrangler pages deploy
+
+Menjalankan lokal:
+  cd web && npx wrangler pages dev
+  (atau server statis apa pun yang menyajikan folder web/public)
+
+Tes unit (port JS vs implementasi Go):
+  node web/test/run-tests.mjs
+  go test ./...
