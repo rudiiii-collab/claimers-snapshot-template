@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claimers Snapshot</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Claimers Snapshot</h1>
+    <p>
+      Build an AORA-style claimers snapshot dataset for any reward token on an
+      EVM chain — <code>claimed</code> (cumulative ramp), <code>Hold</code>,
+      <code>LP</code> (v2 or CL/Slipstream), <code>outflow</code> by subtraction.
+      Everything runs in your browser; RPC keys never leave this page.
+    </p>
+  </header>
+
+  <form id="config-form" class="card" autocomplete="off">
+    <h2>Configuration</h2>
+    <div class="grid">
+      <div class="field">
+        <label for="chain">Chain</label>
+        <select id="chain">
+          <option value="base" selected>Base</option>
+          <option value="custom">Custom / other EVM</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="archiveRpc">Archive RPC <span class="hint">(historical balances — e.g. your Alchemy key)</span></label>
+        <input type="text" id="archiveRpc" placeholder="https://base-mainnet.g.alchemy.com/v2/KEY" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="logsRpc">Logs RPC <span class="hint">(wide-range eth_getLogs)</span></label>
+        <input type="text" id="logsRpc" spellcheck="false">
+      </div>
+
+      <div class="field span2">
+        <label for="token">Token contract <span class="hint">(the reward token)</span></label>
+        <div class="inline">
+          <input type="text" id="token" placeholder="0x…" spellcheck="false">
+          <button type="button" class="small" id="btn-token-info">Auto-detect</button>
+        </div>
+        <div class="note" id="token-note"></div>
+      </div>
+      <div class="field">
+        <label for="decimals">Token decimals</label>
+        <input type="number" id="decimals" value="18" min="0" max="36">
+      </div>
+      <div class="field">
+        <label for="symbol">Symbol <span class="hint">(labels only)</span></label>
+        <input type="text" id="symbol" placeholder="TEA">
+      </div>
+
+      <div class="field span2">
+        <label for="votingReward">Bribe / VotingReward <span class="hint">(contract emitting the claim event)</span></label>
+        <input type="text" id="votingReward" placeholder="0x…" spellcheck="false">
+      </div>
+
+      <div class="field span2">
+        <label for="pools">Pool(s) <span class="hint">(comma-separated; v2 or CL — type &amp; token side auto-detected)</span></label>
+        <div class="inline">
+          <input type="text" id="pools" placeholder="0x…, 0x…" spellcheck="false">
+          <button type="button" class="small" id="btn-discover">Discover pools</button>
+        </div>
+        <div class="note" id="pools-note"></div>
+      </div>
+
+      <div class="field">
+        <label for="startBlock">Start block</label>
+        <input type="text" id="startBlock" inputmode="numeric">
+      </div>
+      <div class="field">
+        <label for="endBlock">End block</label>
+        <input type="text" id="endBlock" inputmode="numeric">
+      </div>
+      <div class="field">
+        <label for="stepBlocks">Step <span class="hint">(blocks between snapshots)</span></label>
+        <input type="text" id="stepBlocks" inputmode="numeric" value="3600">
+        <div class="note" id="step-note"></div>
+      </div>
+      <div class="field">
+        <label for="minClaimed">Min claimed <span class="hint">(include wallets with total &gt; this)</span></label>
+        <input type="text" id="minClaimed" inputmode="decimal" value="1000000">
+      </div>
+
+      <div class="field span2">
+        <label>Claimer source</label>
+        <div class="radio-row">
+          <label><input type="radio" name="claimerSource" value="scan" checked> Scan claim events on-chain</label>
+          <label><input type="radio" name="claimerSource" value="csv"> Upload reference CSV</label>
+          <input type="file" id="claimersFile" accept=".csv,text/csv" class="hidden">
+        </div>
+        <div class="note" id="claimers-note"></div>
+      </div>
+    </div>
+
+    <details class="advanced">
+      <summary>Advanced (DEX contracts, event signature, performance)</summary>
+      <div class="grid">
+        <div class="field span2">
+          <label for="factory">Pool factory <span class="hint">(only for pool discovery)</span></label>
+          <input type="text" id="factory" spellcheck="false">
+        </div>
+        <div class="field span2">
+          <label for="voter">Voter <span class="hint">(resolves the CL gauge for staked LP)</span></label>
+          <input type="text" id="voter" spellcheck="false">
+        </div>
+        <div class="field span2">
+          <label for="claimEventSig">Claim event signature <span class="hint">(topic0 derived via Keccak; layout must stay from/reward/amount)</span></label>
+          <input type="text" id="claimEventSig" value="ClaimRewards(address,address,uint256)" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="chunkBlocks">getLogs chunk</label>
+          <input type="text" id="chunkBlocks" inputmode="numeric" value="10000">
+        </div>
+        <div class="field">
+          <label for="multicallBatch">Multicall batch</label>
+          <input type="number" id="multicallBatch" value="500" min="1">
+        </div>
+        <div class="field">
+          <label for="ratePerSecond">RPC rate /s</label>
+          <input type="number" id="ratePerSecond" value="8" min="1" max="100">
+        </div>
+        <div class="field check-row">
+          <input type="checkbox" id="lpStakedOnly" checked>
+          <label for="lpStakedOnly">Gauge-staked LP only</label>
+        </div>
+        <div class="field check-row">
+          <input type="checkbox" id="cumulative" checked>
+          <label for="cumulative">Cumulative claimed (ramp)</label>
+        </div>
+        <div class="field check-row">
+          <input type="checkbox" id="force">
+          <label for="force">Force recompute (ignore caches)</label>
+        </div>
+      </div>
+    </details>
+
+    <div class="actions">
+      <button type="submit" class="primary" id="btn-run">Run snapshots</button>
+      <button type="button" id="btn-cancel" disabled>Cancel</button>
+      <button type="button" class="small" id="btn-clear-cache" title="Clear cached claim events and block checkpoints">Clear cache</button>
+    </div>
+
+    <div class="progress" id="progress">
+      <div class="bar-track"><div class="bar-fill" id="bar-fill"></div></div>
+      <div class="status" id="status-line">…</div>
+    </div>
+    <div class="note err" id="error-line"></div>
+  </form>
+
+  <section class="card hidden" id="results">
+    <div class="results-head">
+      <h2>Snapshot series</h2>
+      <button type="button" class="small" id="btn-dl-dune">Download Dune CSV</button>
+      <button type="button" class="small" id="btn-dl-series">Download timeseries CSV</button>
+    </div>
+    <div class="pool-summary" id="pool-summary"></div>
+    <div class="legend" id="legend"></div>
+    <div id="chart"></div>
+
+    <div class="results-head" style="margin-top:22px">
+      <h2>Per-wallet detail</h2>
+      <label for="block-select" style="align-self:center">Block</label>
+      <select id="block-select"></select>
+    </div>
+    <div class="table-scroll">
+      <table id="wallet-table">
+        <thead>
+          <tr><th>Wallet</th><th>Claimed</th><th>Hold</th><th>LP</th><th>Outflow</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Reproduces the <a href="https://github.com/rudiiii-collab/claimers-snapshot-template" target="_blank" rel="noopener">claimers-snapshot-template</a>
+    Go pipeline in the browser. Snapshots need an <b>archive</b> RPC for old blocks (Alchemy free works);
+    the claim scan needs a wide-range <b>getLogs</b> RPC (publicnode default). Results are cached locally and resume automatically.
+  </footer>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

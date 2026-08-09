@@ -1,0 +1,6 @@
+# Cloudflare Pages project config.
+#   Local dev:  npx wrangler pages dev            (from the web/ directory)
+#   Deploy:     npx wrangler pages deploy         (free tier; no build step)
+name = "claimers-snapshot"
+compatibility_date = "2026-08-01"
+pages_build_output_dir = "./public"
