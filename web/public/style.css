@@ -12,9 +12,12 @@
   --border: rgba(11, 11, 11, 0.10);
   --accent: #2a78d6;
   --danger: #d03b3b;
-  --s1: #2a78d6; /* LP      (blue)   */
-  --s2: #eb6834; /* Hold    (orange) */
-  --s3: #1baf7a; /* Outflow (aqua)   */
+  /* Series colors (user-requested semantics: hold=green, outflow=red).
+     Validated for CVD both modes; light green↔red sits in the 6–8 band,
+     covered by the chart's secondary encoding (band gaps + legend + table). */
+  --s1: #2a78d6; /* LP      (blue)  */
+  --s2: #008300; /* Hold    (green) */
+  --s3: #e34948; /* Outflow (red)   */
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -30,8 +33,8 @@
     --accent: #3987e5;
     --danger: #e66767;
     --s1: #3987e5;
-    --s2: #d95926;
-    --s3: #199e70;
+    --s2: #008300;
+    --s3: #e66767;
   }
 }
 
