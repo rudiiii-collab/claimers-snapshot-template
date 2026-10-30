@@ -4,6 +4,7 @@
 
 import * as abi from '../public/js/abi.js';
 import { selector, topic0 } from '../public/js/keccak.js';
+import { chartShares, legendHTML } from '../public/js/chart.js';
 import {
   sel, topicPoolCreated, callDataBalanceOf, dataWords,
   signedTick, decodeUintArray, encAddress,
@@ -170,6 +171,21 @@ eq('parseCSV quotes', JSON.stringify(parseCSV('a,b\n"x,1","y""z"\n').rows), '[["
 eq('encAddress', encAddress('0xA1A0b2e02b0e6830AD5a4a7211691200945d8919'),
   '000000000000000000000000a1a0b2e02b0e6830ad5a4a7211691200945d8919');
 eq('dataWords', dataWords('0x' + wordUint(1) + wordUint(2)).length, 2);
+
+const shareFixture = {
+  claimed: 165750115405224905335324n,
+  hold: 60532111582117846096331n,
+  lp: 55105008916621963815606n,
+  outflow: 50112994906485095423387n,
+};
+eq('chart share Hold', chartShares(shareFixture).hold, '36.52%');
+eq('chart share LP', chartShares(shareFixture).lp, '33.25%');
+eq('chart share Transfer out', chartShares(shareFixture).outflow, '30.23%');
+eq('chart zero-claimed share', chartShares({ claimed: 0n, hold: 1n, lp: 2n, outflow: -3n }).hold, '0.00%');
+const percentageLegend = legendHTML('RSGP', shareFixture);
+eq('chart legend includes LP percentage', percentageLegend.includes('33.25%'), true);
+eq('chart legend includes Hold percentage', percentageLegend.includes('36.52%'), true);
+eq('chart legend includes Transfer out percentage', percentageLegend.includes('30.23%'), true);
 
 try {
   const { runAeroTests } = await import('./aero.test.mjs');

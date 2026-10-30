@@ -20,6 +20,33 @@ function fmtFull(v) {
   return v.toLocaleString('en-US', { maximumFractionDigits: 2 });
 }
 
+/** Exact two-decimal percentage of claimed, without Number precision loss. */
+function sharePercent(value, claimed) {
+  const total = BigInt(claimed ?? 0n);
+  let part = BigInt(value ?? 0n);
+  if (total <= 0n) return '0.00%';
+  if (part < 0n) part = 0n;
+  const hundredths = (part * 10000n + total / 2n) / total;
+  const whole = hundredths / 100n;
+  const frac = (hundredths % 100n).toString().padStart(2, '0');
+  return `${whole}.${frac}%`;
+}
+
+/** LP/Hold/Transfer-out shares of claimed for one snapshot point. */
+export function chartShares(point) {
+  return {
+    lp: sharePercent(point.lp, point.claimed),
+    hold: sharePercent(point.hold, point.claimed),
+    outflow: sharePercent(point.outflow, point.claimed),
+  };
+}
+
+function escapeHTML(value) {
+  return String(value).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[c]);
+}
+
 function fmtTime(ts, block) {
   if (!ts) return `block ${block}`;
   const d = new Date(ts * 1000);
@@ -52,14 +79,18 @@ export function renderChart(container, series, decimals) {
   container.innerHTML = '';
   if (!series.length) return;
 
-  const pts = series.map((s) => ({
-    block: s.block.toString(),
-    ts: s.timestamp || 0,
-    lp: Math.max(0, unitsToNumber(s.lp, decimals)),
-    hold: Math.max(0, unitsToNumber(s.hold, decimals)),
-    outflow: Math.max(0, unitsToNumber(s.outflow, decimals)),
-    claimed: unitsToNumber(s.claimed, decimals),
-  }));
+  const pts = series.map((s) => {
+    const shares = chartShares(s);
+    return {
+      block: s.block.toString(),
+      ts: s.timestamp || 0,
+      lp: Math.max(0, unitsToNumber(s.lp, decimals)),
+      hold: Math.max(0, unitsToNumber(s.hold, decimals)),
+      outflow: Math.max(0, unitsToNumber(s.outflow, decimals)),
+      claimed: unitsToNumber(s.claimed, decimals),
+      shares,
+    };
+  });
 
   const W = Math.max(560, container.clientWidth || 800);
   const H = 340;
@@ -144,9 +175,9 @@ export function renderChart(container, series, decimals) {
     });
     tip.innerHTML =
       `<div class="tip-head">${fmtTime(p.ts, p.block)} · block ${p.block}</div>` +
-      `<div><span class="key s1"></span>LP <b>${fmtFull(p.lp)}</b></div>` +
-      `<div><span class="key s2"></span>Hold <b>${fmtFull(p.hold)}</b></div>` +
-      `<div><span class="key s3"></span>Outflow <b>${fmtFull(p.outflow)}</b></div>` +
+      `<div><span class="key s1"></span>LP <b>${fmtFull(p.lp)} <span class="tip-pct">${p.shares.lp}</span></b></div>` +
+      `<div><span class="key s2"></span>Hold <b>${fmtFull(p.hold)} <span class="tip-pct">${p.shares.hold}</span></b></div>` +
+      `<div><span class="key s3"></span>Transfer out <b>${fmtFull(p.outflow)} <span class="tip-pct">${p.shares.outflow}</span></b></div>` +
       `<div class="tip-total">Claimed <b>${fmtFull(p.claimed)}</b></div>`;
     tip.style.display = 'block';
     const cw = container.clientWidth;
@@ -163,11 +194,13 @@ export function renderChart(container, series, decimals) {
   });
 }
 
-/** Legend markup (kept in HTML so text wears text tokens, not series color). */
-export function legendHTML(symbol) {
-  const sym = symbol ? symbol.toUpperCase() : 'Token';
+/** Legend markup. Percentages describe the latest chart snapshot. */
+export function legendHTML(symbol, latest = null) {
+  const sym = escapeHTML(symbol ? symbol.toUpperCase() : 'Token');
+  const shares = latest ? chartShares(latest) : null;
+  const pct = (value) => shares ? `<b class="legend-pct">${value}</b>` : '';
   return `
-    <span class="legend-item"><span class="key s1"></span>${sym} in LP</span>
-    <span class="legend-item"><span class="key s2"></span>${sym} held</span>
-    <span class="legend-item"><span class="key s3"></span>Outflow</span>`;
+    <span class="legend-item"><span class="key s1"></span>${sym} in LP ${pct(shares?.lp)}</span>
+    <span class="legend-item"><span class="key s2"></span>${sym} held ${pct(shares?.hold)}</span>
+    <span class="legend-item"><span class="key s3"></span>Transfer out ${pct(shares?.outflow)}</span>`;
 }

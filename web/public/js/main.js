@@ -176,7 +176,8 @@ function renderResults(result, cfg) {
     .map((p) => `pool ${p.address}: ${cfg.symbol || 'token'} is token${p.tokenIsToken0 ? '0' : '1'}`)
     .join(' · ') + ` · ${result.claimers.length} claimers > ${cfg.minClaimed} ${cfg.symbol || ''}`;
 
-  $('legend').innerHTML = legendHTML(cfg.symbol);
+  const latestPoint = result.series[result.series.length - 1] || null;
+  $('legend').innerHTML = legendHTML(cfg.symbol, latestPoint);
   renderChart($('chart'), result.series, cfg.decimals);
 
   // Block selector for the per-wallet table (default: last block).
