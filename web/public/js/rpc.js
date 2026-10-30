@@ -132,6 +132,10 @@ export class Client {
     return BigInt(await this.call('eth_blockNumber'));
   }
 
+  async chainId() {
+    return BigInt(await this.call('eth_chainId'));
+  }
+
   /** Read-only call at a block. `block` is a BigInt/number; data is 0x-hex. */
   async ethCall(to, data, block) {
     return this.call('eth_call', { to, data: data.startsWith('0x') ? data : '0x' + data }, blockTag(block));

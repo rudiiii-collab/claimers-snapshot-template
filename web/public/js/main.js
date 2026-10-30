@@ -11,25 +11,25 @@ import * as store from './store.js';
 // Chain presets. "Custom" clears the chain-specific fields.
 const PRESETS = {
   base: {
-    // mainnet.base.org serves archive state AND 10k-range getLogs for free
-    // (verified Aug 2026; publicnode now requires a personal token). It is
-    // rate-limited — bring an Alchemy key for heavy runs.
-    logsRpc: 'https://mainnet.base.org',
+    // Split defaults: PublicNode handles historical wide-range getLogs;
+    // mainnet.base.org serves historical eth_call but currently rate-limits
+    // getLogs aggressively. Users can replace either endpoint.
+    logsRpc: 'https://base-rpc.publicnode.com',
     archiveRpc: 'https://mainnet.base.org',
     archivePlaceholder: 'https://base-mainnet.g.alchemy.com/v2/YOUR_KEY',
-    factory: '0x420dd381b31aef6683db6b902084cb0ffece40da', // Aerodrome PoolFactory
-    voter: '0x16613524e02ad97edfef371bc883f2f5d6c480a5',   // Aerodrome Voter
-    // The $TEA example the repo ships configured for:
+    factory: '0x9cb220581b91b0c83223012fe69688b92ad07a76', // Aero CLFactory
+    // RSGP incentive-only example on Aero MetaDEX03:
     example: {
-      token: '0xa1a0b2e02b0e6830ad5a4a7211691200945d8919',
-      symbol: 'TEA',
+      token: '0x44b63af715d5ef02cc3646a6ce96875e11d69e85',
+      symbol: 'RSGP',
       decimals: 18,
-      votingReward: '0xe3460df40a682175972781a1b1330eaba3542118',
-      pools: '0xabe1f289107c20081f591bb3972b8289add64f6c',
-      startBlock: '46870929',
-      endBlock: '47050128',
+      votingReward: '0x4ad4efa871b9a9d943cd69fd779c4d0230eb021f',
+      pools: '0x8e859b6cf564c4ac2b848693c85c496e81dbf6c8',
+      startBlock: '53171524',
+      programScanStart: '53171524',
+      endBlock: '53275371',
       stepBlocks: '3600',
-      minClaimed: '1000000',
+      minClaimed: '1000',
     },
   },
 };
@@ -37,8 +37,8 @@ const PRESETS = {
 const $ = (id) => document.getElementById(id);
 const FIELDS = [
   'chain', 'archiveRpc', 'logsRpc', 'token', 'decimals', 'symbol', 'votingReward',
-  'pools', 'startBlock', 'endBlock', 'stepBlocks', 'minClaimed', 'factory', 'voter',
-  'claimEventSig', 'chunkBlocks', 'multicallBatch', 'ratePerSecond',
+  'pools', 'startBlock', 'endBlock', 'stepBlocks', 'minClaimed', 'factory',
+  'programScanStart', 'chunkBlocks', 'multicallBatch', 'ratePerSecond',
 ];
 const CHECKS = ['lpStakedOnly', 'cumulative', 'force'];
 
@@ -73,7 +73,6 @@ function applyPreset(name, withExample) {
   $('archiveRpc').value = $('archiveRpc').value || p.archiveRpc || '';
   $('archiveRpc').placeholder = p.archivePlaceholder;
   $('factory').value = $('factory').value || p.factory;
-  $('voter').value = $('voter').value || p.voter;
   if (withExample) {
     for (const [k, val] of Object.entries(p.example)) $(k).value = val;
   }
@@ -99,12 +98,13 @@ function requireBig(id, label) {
 
 function buildConfig() {
   const cfg = {
+    chain: $('chain').value,
     archiveRpc: $('archiveRpc').value.trim(),
     logsRpc: $('logsRpc').value.trim(),
     token: requireAddr('token', 'Token contract'),
     decimals: parseInt($('decimals').value, 10) || 18,
     symbol: $('symbol').value.trim(),
-    votingReward: requireAddr('votingReward', 'Bribe / VotingReward'),
+    votingReward: requireAddr('votingReward', 'VotingRewardsManager'),
     pools: $('pools').value.split(',').map((s) => lower(s.trim())).filter(Boolean),
     startBlock: requireBig('startBlock', 'Start block'),
     endBlock: requireBig('endBlock', 'End block'),
@@ -113,8 +113,6 @@ function buildConfig() {
     claimerSource: document.querySelector('input[name=claimerSource]:checked').value,
     claimersCSVText,
     factory: lower($('factory').value.trim()),
-    voter: lower($('voter').value.trim()),
-    claimEventSig: $('claimEventSig').value.trim(),
     chunkBlocks: BigInt($('chunkBlocks').value.trim() || '50000'),
     multicallBatch: parseInt($('multicallBatch').value, 10) || 500,
     ratePerSecond: parseFloat($('ratePerSecond').value) || 8,
@@ -123,6 +121,11 @@ function buildConfig() {
     cumulative: $('cumulative').checked,
     force: $('force').checked,
   };
+  cfg.programScanStart = $('programScanStart').value.trim()
+    ? requireBig('programScanStart', 'Program scan start block') : cfg.startBlock;
+  const validProgramStart = cfg.programScanStart <= cfg.startBlock;
+  $('programScanStart').setAttribute('aria-invalid', validProgramStart ? 'false' : 'true');
+  if (!validProgramStart) throw new Error('Program scan start block must be ≤ start block for complete program discovery.');
   for (const p of cfg.pools) {
     if (!/^0x[0-9a-f]{40}$/.test(p)) throw new Error(`Pool "${p}" is not a 0x… address`);
   }
@@ -270,7 +273,7 @@ async function discover() {
   const note = $('pools-note');
   try {
     const token = requireAddr('token', 'Token contract');
-    const factory = requireAddr('factory', 'Pool factory (advanced)');
+    const factory = requireAddr('factory', 'Aero CLFactory (advanced)');
     const rpc = $('logsRpc').value.trim() || $('archiveRpc').value.trim();
     if (!rpc) throw new Error('Set a logs RPC first.');
     const start = requireBig('startBlock', 'Start block');
@@ -291,7 +294,7 @@ async function discover() {
     $('pools').value = found.map((p) => p.address).join(', ');
     note.className = 'note ok';
     note.textContent = `✓ ${found.length} pool(s): ` +
-      found.map((p) => `${p.address.slice(0, 10)}… (token${lower(p.token0) === token ? '0' : '1'})`).join(', ');
+      found.map((p) => `${p.address.slice(0, 10)}… (token${lower(p.token0) === token ? '0' : '1'}; tickSpacing ${p.tickSpacing})`).join(', ');
   } catch (e) {
     note.className = 'note err';
     note.textContent = e.message;
@@ -306,7 +309,7 @@ function init() {
     fillForm(saved);
     applyPreset($('chain').value, false);
   } else {
-    applyPreset('base', true); // first visit: show the working TEA example
+    applyPreset('base', true); // first visit: show the RSGP incentive-only example
   }
   snapshotCount();
 

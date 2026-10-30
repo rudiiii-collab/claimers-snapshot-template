@@ -1,65 +1,84 @@
-// ClaimRewards scanning, cumulative claimed, and reference-CSV import — port
-// of claims.go. The claim event assumed (Aerodrome/Velodrome Reward.sol):
-//   event ClaimRewards(address indexed from, address indexed reward, uint256 amount)
-//   topic0=sig, topic1=from, topic2=reward token, data[0]=amount
-// `reward` is an INDEXED topic, so the scan filters server-side by topic2 =
-// the tracked token — this keeps responses tiny and enables wide block ranges.
-
-import { addressTopic, topicToAddress, dataWords, hexToBig, lower } from './abi.js';
+// Aero MetaDEX03 incentive-only claims. Wallet = topic2 (recipient), not
+// topic1 (veNFT tokenId). ClaimFees is NEVER requested or counted.
+import {
+  addressTopic, topicToAddress, dataWords, hexToBig, lower, encUint,
+  topicIncentiveCreated, topicClaimIncentives,
+} from './abi.js';
 import { isRangeError, parseSuggestedRange } from './rpc.js';
+import { formatUnits } from './csv.js';
 
-/**
- * Scan every ClaimRewards(reward=token) emission from the bribe contract over
- * [start,end], keeping each event's block so claimed can be accumulated per
- * snapshot block. Automatically shrinks the getLogs window when a provider
- * rejects the range (Alchemy's ~10-block cap, publicnode's log caps, ...).
- *
- * @returns {Promise<Array<{wallet:string, block:bigint, amount:bigint}>>}
- */
-export async function scanClaimEvents(client, cfg, start, end, onProgress, topic0Override) {
-  const topic = topic0Override || cfg.claimTopic0;
-  let maxChunk = cfg.chunkBlocks > 0n ? cfg.chunkBlocks : 50000n;
-  let chunk = maxChunk;
-  const events = [];
+/** Chunked inclusive log scan shared by claims and CL pool discovery. */
+export async function scanLogs(client, address, start, end, topics, onProgress, chunkBlocks = 50000n) {
+  let chunk = chunkBlocks > 0n ? BigInt(chunkBlocks) : 50000n;
+  const result = [];
   const span = end - start + 1n;
-
   for (let from = start; from <= end;) {
-    let to = from + chunk - 1n;
-    if (to > end) to = end;
+    const to = from + chunk - 1n < end ? from + chunk - 1n : end;
     let logs;
     try {
-      logs = await client.getLogs(cfg.votingReward, from, to, [topic, null, addressTopic(cfg.token)]);
+      logs = await client.getLogs(address, from, to, topics);
     } catch (err) {
       if (err.name === 'AbortError') throw err;
-      if (isRangeError(err)) {
+      if (isRangeError(err) && to > from) {
         let nc = BigInt(parseSuggestedRange(err.message) || 0);
         if (nc === 0n || nc >= chunk) nc = chunk / 2n;
         if (nc < 1n) nc = 1n;
         onProgress?.({ phase: 'scan', note: `provider rejected ${chunk}-block range; shrinking to ${nc}` });
         chunk = nc;
-        continue; // retry the same `from` with a smaller window
+        continue;
       }
       throw new Error(`getLogs [${from},${to}]: ${err.message}`);
     }
-    for (const lg of logs) {
-      if (!lg.topics || lg.topics.length < 3) continue;
-      const words = dataWords(lg.data);
-      if (words.length < 1) continue;
-      // topic1=from, topic2=reward (already filtered), data[0]=amount.
-      events.push({
-        wallet: lower(topicToAddress(lg.topics[1])),
-        block: BigInt(lg.blockNumber),
-        amount: hexToBig('0x' + words[0]),
-      });
-    }
+    result.push(...logs);
     from = to + 1n;
-    onProgress?.({
-      phase: 'scan',
-      done: Number(from - start),
-      total: Number(span),
-      note: `scanned to block ${from - 1n} — ${events.length} claim events`,
-    });
+    onProgress?.({ phase: 'scan', done: Number(from - start), total: Number(span),
+      note: `scanned to block ${to} — ${result.length} logs` });
   }
+  return result;
+}
+
+/** Scan programs from manager creation, then only incentive claims in [start,end].
+ * Returns [{wallet, block, amount}] with exact BigInt amounts. Diagnostic totals
+ * are BEFORE the wallet MIN_CLAIMED filter, and include zero-claim programs.
+ */
+export async function scanClaimEvents(client, cfg, start, end, onProgress) {
+  const programStart = cfg.programScanStart ?? cfg.startBlock ?? start;
+  if (programStart < 0n || programStart > start) throw new Error('Program scan start must be between zero and Start block.');
+  const token = lower(cfg.token);
+  const created = await scanLogs(client, cfg.votingReward, programStart, end,
+    [topicIncentiveCreated, null, addressTopic(token)], onProgress, cfg.chunkBlocks);
+  const programs = new Map();
+  for (const log of created) {
+    if (log.topics?.length !== 4 || lower(log.topics[0]) !== topicIncentiveCreated ||
+        lower(topicToAddress(log.topics[2])) !== token) continue;
+    programs.set(hexToBig(log.topics[1]).toString(), { count: 0, amount: 0n });
+  }
+  const ids = [...programs.keys()].sort((a, b) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0);
+  onProgress?.({ phase: 'scan', audit: true,
+    note: `Incentive programs: ${ids.map((id) => `${id} -> ${token}`).join(', ') || 'none'}. ClaimFees excluded.` });
+  const logs = ids.length ? await scanLogs(client, cfg.votingReward, start, end,
+    [topicClaimIncentives, null, null, ids.map((id) => '0x' + encUint(id))],
+    onProgress, cfg.chunkBlocks) : [];
+  const events = [];
+  let total = 0n;
+  for (const log of logs) {
+    if (log.topics?.length !== 4 || lower(log.topics[0]) !== topicClaimIncentives) continue;
+    const stats = programs.get(hexToBig(log.topics[3]).toString());
+    const words = dataWords(log.data);
+    if (!stats || !words.length) continue;
+    const amount = hexToBig('0x' + words[0]);
+    events.push({ wallet: lower(topicToAddress(log.topics[2])), block: BigInt(log.blockNumber), amount });
+    stats.count++;
+    stats.amount += amount;
+    total += amount;
+  }
+  for (const id of ids) {
+    const { count, amount } = programs.get(id);
+    onProgress?.({ phase: 'scan', audit: true,
+      note: `ClaimIncentives program ${id}: ${count} events, ${formatUnits(amount, cfg.decimals)} ${cfg.symbol || 'tokens'} (${amount} raw), before MIN_CLAIMED` });
+  }
+  onProgress?.({ phase: 'scan', audit: true,
+    note: `Incentives total: ${events.length} events, ${formatUnits(total, cfg.decimals)} ${cfg.symbol || 'tokens'} (${total} raw), before MIN_CLAIMED; ClaimFees excluded` });
   return events;
 }
 

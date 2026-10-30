@@ -4,7 +4,7 @@
 //   Hold    = token.balanceOf(wallet)                      (direct holdings)
 //   LP      = Σ v2 pools (lpBal/totalSupply)*tokenReserve
 //           + Σ CL pools token-side of positions (v3 math) (LP exposure)
-//   claimed = cumulative ClaimRewards up to b (or fixed lifetime total)
+//   claimed = cumulative ClaimIncentives up to b (or fixed lifetime total)
 //   outflow = claimed - Hold - LP                          (by subtraction)
 //
 // All integer math is BigInt. The only deviation from Go: v2 LP uses floor

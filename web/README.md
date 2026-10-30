@@ -1,15 +1,14 @@
-# Claimers Snapshot — web app
+# Aero MetaDEX03 Incentive Claimers Snapshot — web app
 
-A customizable web UI for the claimers-snapshot pipeline in this repo: fill a
-form (token, bribe, pools, block range, filter), hit **Run**, get the classic
-stacked-area chart (`LP` / `Hold` / `outflow` with the cumulative `claimed`
-ramp), a per-wallet table, and a Dune-ready CSV download.
+A browser UI for building an **incentive-only** claimers snapshot from Aero
+MetaDEX03 on Base. It discovers matching `IncentiveCreated` programs, counts
+only `ClaimIncentives` events (`ClaimFees` are excluded), and produces the
+stacked-area chart (`LP` / `Hold` / `outflow` with cumulative `claimed`), a
+per-wallet table, and a Dune-ready CSV download.
 
-**All compute runs in your browser** — an exact BigInt port of the Go pipeline
-(claim-event scan, Multicall3 batching, Uniswap-V3/Slipstream CL math). RPC
-keys never leave the page; results are cached in IndexedDB so re-runs and
-interrupted runs resume instantly. See [`../docs/architecture.md`](../docs/architecture.md)
-for why this beats a Worker-side design on the Cloudflare free tier.
+All compute runs in the browser with exact `BigInt` arithmetic. Historical
+balances and Aero CL positions come from the configured RPC endpoints; results
+are cached in IndexedDB so interrupted runs can resume.
 
 ## Run locally
 
@@ -36,51 +35,50 @@ CORS fallback). Total cost: **$0**.
 
 ## Using the app
 
-The form maps 1:1 to the pipeline's `.env`:
+The form is prefilled with the RSGP incentive program example:
 
-| Field | `.env` equivalent | Notes |
-|---|---|---|
-| Chain | — | Base preset fills factory/voter/logs RPC |
-| Archive RPC | `BASE_RPC` | **required for historical blocks** — Alchemy free has archive on Base |
-| Logs RPC | (`--rpc` override) | wide-range `eth_getLogs`; default `base.publicnode.com` |
-| Token contract | `TEA_TOKEN` | "Auto-detect" fills decimals + symbol via `decimals()`/`symbol()` |
-| Token decimals | `TEA_DECIMALS` | |
-| Bribe / VotingReward | `VOTING_REWARD` | the contract emitting `ClaimRewards` |
-| Pool(s) | `POOLS` | comma-separated; v2 vs CL and token0/token1 auto-detected. "Discover pools" scans `PoolCreated` on the factory |
-| Block range / step | `START_BLOCK`/`END_BLOCK`/`STEP_BLOCKS` | step 3600 ≈ 2 h on Base |
-| Min claimed | `MIN_CLAIMED` | wallets with **total** claimed > threshold (deduped first) |
-| Claimer source | `import-claimers` / `claims` | upload a reference CSV **or** scan claim events on-chain |
-| Advanced → staked-only, cumulative, chunk, batch, rate | `LP_STAKED_ONLY`, `CUMULATIVE_CLAIMED`, `CHUNK_BLOCKS`, `MULTICALL_BATCH`, `RATE_PER_SECOND` | same defaults |
+| Field | Notes |
+|---|---|
+| Chain | Base preset fills Aero CLFactory and separate archive/logs RPCs |
+| Archive RPC | Historical `eth_call` for token balances and CL positions |
+| Logs RPC | Wide-range `eth_getLogs` for program discovery and incentive claims |
+| Token contract / decimals / symbol | Tracked incentive token; auto-detect fills metadata |
+| VotingRewardsManager | Contract emitting `IncentiveCreated` and `ClaimIncentives` |
+| Pool(s) | Comma-separated Aero CL pools; token side is auto-detected |
+| Block range / step | Claim/snapshot window and snapshot spacing |
+| Program scan start block | Optional earlier manager block for programs created before the claim window; must be ≤ start block |
+| Min claimed | Include wallets whose total incentive claims exceed this threshold |
+| Claimer source | Scan onchain events or upload an incentive-only reference CSV |
+| Advanced controls | Staked-only LP, cumulative claimed, log chunk, Multicall batch, and rate limit |
 
-First visit pre-fills the **$TEA on Base** example from the repo README.
+The bundled Base preset uses RSGP, its VotingRewardsManager, and its Aero CL
+RSGP/USDC pool. `ClaimFees` never contribute to `claimed`.
 
-### Provider note (same as the Go tool)
+### Provider note
 
-Two RPC capabilities are needed: **historical balances** need an archive node
-— that's the Archive RPC field; the **claim-event scan** sweeps the whole
-range and needs wide `eth_getLogs` — that's the Logs RPC field. The scan
-result is cached locally, so you pay it once per config.
+Two RPC capabilities are needed: historical balances/positions use the
+**Archive RPC**, while program/claim scans use wide-range `eth_getLogs` through
+the **Logs RPC**. The current defaults split those jobs:
 
-Provider landscape as verified **August 2026** (this shifts — the app's
-range-shrink logic adapts automatically):
+- Archive RPC: `mainnet.base.org`
+- Logs RPC: `base-rpc.publicnode.com`
 
-| Endpoint | Archive `eth_call` | `eth_getLogs` range |
-|---|---|---|
-| `mainnet.base.org` (keyless default) | ✅ works | 10,000-block cap (fine: ~18 requests per 180k-block scan) |
-| Alchemy free (your key) | ✅ works | ❌ ~10-block cap — don't use it as the Logs RPC |
-| `base.publicnode.com` | ❌ now requires a (free) personal token for anything non-recent | — |
-
-`mainnet.base.org` is rate-limited; the app's default 8 req/s + retry/backoff
-copes, but bring an Alchemy key as the Archive RPC for heavy or repeated runs.
+A live integration run over blocks 53,171,524–53,275,371 completed through
+PublicNode in 12 requests. Provider limits can change, so the log scanner
+shrinks rejected ranges automatically and both endpoints remain editable.
 
 ### Caching semantics
 
-- Claim events cache per (bribe, reward, range, event signature).
-- Per-block checkpoints hold the expensive balance/LP reads, scoped by
-  (token, pools, staked-only, claimer set) — changing `MIN_CLAIMED` or the
-  claimer CSV invalidates them automatically; toggling *cumulative* reuses
-  them with zero RPC, exactly like the Go tool.
-- "Force recompute" ignores caches; "Clear cache" wipes them.
+- Incentive events are cached per version, authoritative RPC `eth_chainId`,
+  logs endpoint, manager, token, program-discovery start, claim start, and claim
+  end.
+- Per-block checkpoints hold expensive balance/LP reads. Their namespace is
+  migration-versioned and scoped by authoritative RPC `eth_chainId`, UI chain
+  label, archive RPC, token, pools, staked-only mode, and claimer set.
+- Runs stop early if Logs RPC and Archive RPC report different chain IDs.
+- Changing `MIN_CLAIMED` or the claimer CSV invalidates the relevant checkpoint
+  scope; toggling cumulative mode can reuse hold/LP data.
+- **Force recompute** ignores caches; **Clear cache** wipes them.
 
 ## Tests
 
@@ -88,12 +86,10 @@ copes, but bring an Alchemy key as the Archive RPC for heavy or repeated runs.
 node web/test/run-tests.mjs
 ```
 
-Verifies the JS port value-for-value against the Go implementation (expected
-values generated with `go test -run TestOracle -v`): keccak selectors/topics,
-TickMath across the full tick range, `positionAmounts`, Multicall3 ABI
-encoding/decoding, claimer dedupe + `MIN_CLAIMED`, cumulative-claimed ramps,
-and the plain-decimal CSV rules (never scientific notation — Dune's uploader
-types `1.7e+08` columns as VARCHAR, which silently breaks SUM/sort).
+The suite covers keccak selectors/topics, TickMath, CL position math,
+Multicall3 ABI encoding, incentive-only program/claim filtering, signed Aero
+CLFactory tick spacing, direct `pool.gauge()`/`gauge.nft()` resolution, UI
+config migration, cumulative claims, and plain-decimal CSV output.
 
 ## Free-tier limits that matter
 

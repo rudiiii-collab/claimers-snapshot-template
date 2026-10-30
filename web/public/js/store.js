@@ -7,7 +7,7 @@
 
 const DB_NAME = 'claimers-snapshot';
 const DB_VERSION = 1;
-const CONFIG_KEY = 'claimers-config-v1';
+const CONFIG_KEY = 'claimers-config-aero-v1-incentives-only';
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -48,7 +48,7 @@ export async function hashKey(obj) {
 
 // ---- claim-event cache (mirrors data/cache/claim_events.json) --------------
 
-// Valid only for the same (bribe, reward token, scan range, event sig).
+// Cache keys must scope the incentive-only version, manager, token and scan ranges.
 export async function loadClaimEventsCache(key) {
   const rec = await tx('claimEvents', 'readonly', (s) => s.get(key));
   if (!rec) return null;

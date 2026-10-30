@@ -1,8 +1,6 @@
-// Concentrated-liquidity (Slipstream/v3) position discovery + LP exposure —
-// port of v3pos.go. Assumes Aerodrome Slipstream interfaces:
-//   gauge via Voter.gauges(pool), NFT manager via gauge.nft(),
-//   staked ids via gauge.stakedValues(wallet), positions() in Slipstream order.
-// (See ADAPTING.md Tier-2 §2 for other CL DEXes.)
+// Concentrated-liquidity position discovery + LP exposure for Aero MetaDEX03.
+// The pool exposes gauge(), the gauge exposes nft(), staked token IDs come
+// from gauge.stakedValues(wallet), and positions() uses Slipstream ordering.
 
 import {
   sel, encAddress, encUint, returnAddress, returnUint, dataWords, hexToBig,
@@ -40,12 +38,10 @@ export async function loadCLPool(client, cfg, poolAddr, block) {
   };
   pool.tokenIsToken0 = pool.token0 === lower(cfg.token);
 
-  // Resolve the CL gauge via Voter.gauges(pool), then NFPM via gauge.nft().
-  if (cfg.voter) {
-    try {
-      pool.gauge = returnAddress(await client.ethCall(cfg.voter, sel.gauges + encAddress(poolAddr), block));
-    } catch { /* voter missing/reverts: leave empty */ }
-  }
+  // MetaDEX03 pools expose their gauge directly.
+  try {
+    pool.gauge = returnAddress(await client.ethCall(poolAddr, sel.gauge, block));
+  } catch { /* missing/reverting gauge: leave empty */ }
   if (hasAddr(pool.gauge)) {
     try {
       pool.nfpm = returnAddress(await client.ethCall(pool.gauge, sel.nft, block));
