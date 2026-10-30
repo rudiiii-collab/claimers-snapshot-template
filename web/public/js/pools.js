@@ -4,7 +4,7 @@
 
 import {
   sel, encAddress, addressTopic, topicToAddress, returnAddress, returnUint,
-  dataWords, hexToBig, decodeString, lower,
+  dataWords, decodeString, lower, signedTick,
 } from './abi.js';
 import { isRangeError, parseSuggestedRange } from './rpc.js';
 
@@ -25,9 +25,10 @@ export async function resolveManualPools(client, cfg, block) {
 }
 
 /**
- * Self-serve discovery: scan PoolCreated(token0, token1, stable, pool, len)
- * on the factory for pools containing `token` (as token0 OR token1).
- * Uses the logs RPC (wide ranges). Returns [{address, token0, token1, stable}].
+ * Self-serve Aero CL discovery: scan
+ * PoolCreated(token0, token1, tickSpacing, pool) on CLFactory for pools
+ * containing `token` (as token0 OR token1). Returns
+ * [{address, token0, token1, tickSpacing}].
  */
 export async function discoverPools(client, cfg, start, end, topicPoolCreated, onProgress) {
   const tokenTopic = addressTopic(cfg.token);
@@ -49,7 +50,7 @@ export async function discoverPools(client, cfg, start, end, topicPoolCreated, o
         logs = await client.getLogs(cfg.factory, from, to, topics);
       } catch (err) {
         if (err.name === 'AbortError') throw err;
-        if (isRangeError(err)) {
+        if (isRangeError(err) && to > from) {
           let nc = BigInt(parseSuggestedRange(err.message) || 0);
           if (nc === 0n || nc >= chunk) nc = chunk / 2n;
           if (nc < 1n) nc = 1n;
@@ -71,7 +72,7 @@ export async function discoverPools(client, cfg, start, end, topicPoolCreated, o
           address: pool,
           token0: lower(topicToAddress(lg.topics[1])),
           token1: lower(topicToAddress(lg.topics[2])),
-          stable: hexToBig(lg.topics[3]) !== 0n,
+          tickSpacing: signedTick(lg.topics[3].slice(2)),
         });
       }
     }

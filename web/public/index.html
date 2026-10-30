@@ -12,10 +12,11 @@
   <header>
     <h1>Claimers Snapshot</h1>
     <p>
-      Build an AORA-style claimers snapshot dataset for any reward token on an
-      EVM chain — <code>claimed</code> (cumulative ramp), <code>Hold</code>,
-      <code>LP</code> (v2 or CL/Slipstream), <code>outflow</code> by subtraction.
-      Everything runs in your browser; RPC keys never leave this page.
+      Build an Aero MetaDEX03 incentive-only claimers snapshot —
+      <code>claimed</code> (cumulative ramp), <code>Hold</code>,
+      <code>LP</code> (CL/Slipstream), <code>outflow</code> by subtraction.
+      Only <code>ClaimIncentives</code> counts; ClaimFees are always excluded.
+      Everything runs in your browser; RPC requests go to your configured providers.
     </p>
   </header>
 
@@ -52,16 +53,16 @@
       </div>
       <div class="field">
         <label for="symbol">Symbol <span class="hint">(labels only)</span></label>
-        <input type="text" id="symbol" placeholder="TEA">
+        <input type="text" id="symbol" placeholder="RSGP">
       </div>
 
       <div class="field span2">
-        <label for="votingReward">Bribe / VotingReward <span class="hint">(contract emitting the claim event)</span></label>
+        <label for="votingReward">VotingRewardsManager <span class="hint">(contract emitting ClaimIncentives)</span></label>
         <input type="text" id="votingReward" placeholder="0x…" spellcheck="false">
       </div>
 
       <div class="field span2">
-        <label for="pools">Pool(s) <span class="hint">(comma-separated; v2 or CL — type &amp; token side auto-detected)</span></label>
+        <label for="pools">Pool(s) <span class="hint">(comma-separated Aero CL pools; token side auto-detected)</span></label>
         <div class="inline">
           <input type="text" id="pools" placeholder="0x…, 0x…" spellcheck="false">
           <button type="button" class="small" id="btn-discover">Discover pools</button>
@@ -84,34 +85,32 @@
       </div>
       <div class="field">
         <label for="minClaimed">Min claimed <span class="hint">(include wallets with total &gt; this)</span></label>
-        <input type="text" id="minClaimed" inputmode="decimal" value="1000000">
+        <input type="text" id="minClaimed" inputmode="decimal" value="1000">
       </div>
 
       <div class="field span2">
         <label>Claimer source</label>
         <div class="radio-row">
-          <label><input type="radio" name="claimerSource" value="scan" checked> Scan claim events on-chain</label>
+          <label><input type="radio" name="claimerSource" value="scan" checked> Scan claim events onchain</label>
           <label><input type="radio" name="claimerSource" value="csv"> Upload reference CSV</label>
           <input type="file" id="claimersFile" accept=".csv,text/csv" class="hidden">
         </div>
+        <div class="note">Reference CSV totals must be incentive-only in fixed-total mode (Cumulative claimed unchecked); fee-inclusive totals cannot be separated automatically.</div>
         <div class="note" id="claimers-note"></div>
       </div>
     </div>
 
     <details class="advanced">
-      <summary>Advanced (DEX contracts, event signature, performance)</summary>
+      <summary>Advanced (program discovery, DEX contracts, performance)</summary>
       <div class="grid">
         <div class="field span2">
-          <label for="factory">Pool factory <span class="hint">(only for pool discovery)</span></label>
+          <label for="factory">Pool factory <span class="hint">(Aero CLFactory; only for CL pool discovery)</span></label>
           <input type="text" id="factory" spellcheck="false">
         </div>
         <div class="field span2">
-          <label for="voter">Voter <span class="hint">(resolves the CL gauge for staked LP)</span></label>
-          <input type="text" id="voter" spellcheck="false">
-        </div>
-        <div class="field span2">
-          <label for="claimEventSig">Claim event signature <span class="hint">(topic0 derived via Keccak; layout must stay from/reward/amount)</span></label>
-          <input type="text" id="claimEventSig" value="ClaimRewards(address,address,uint256)" spellcheck="false">
+          <label for="programScanStart">Program scan start block <span class="hint">(optional; defaults to start block)</span></label>
+          <input type="text" id="programScanStart" inputmode="numeric" placeholder="Defaults to start block">
+          <div class="note">Use the manager's first block for complete program discovery, including programs created before the claim window. Must be ≤ start block.</div>
         </div>
         <div class="field">
           <label for="chunkBlocks">getLogs chunk</label>
@@ -179,9 +178,9 @@
   </section>
 
   <footer>
-    Reproduces the <a href="https://github.com/rudiiii-collab/claimers-snapshot-template" target="_blank" rel="noopener">claimers-snapshot-template</a>
-    Go pipeline in the browser. Snapshots need an <b>archive</b> RPC for old blocks (Alchemy free works);
-    the claim scan needs a wide-range <b>getLogs</b> RPC (publicnode default). Results are cached locally and resume automatically.
+    Aero MetaDEX03 web app from <a href="https://github.com/rudiiii-collab/claimers-snapshot-template" target="_blank" rel="noopener">claimers-snapshot-template</a>;
+    the Go CLI has not been ported. Snapshots need an <b>archive</b> RPC for old blocks;
+    the incentive scan needs a wide-range <b>getLogs</b> RPC (base-rpc.publicnode.com default). Results are cached locally and resume automatically.
   </footer>
 </div>
 <script type="module" src="js/main.js"></script>

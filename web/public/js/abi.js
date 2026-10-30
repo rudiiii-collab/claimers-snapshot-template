@@ -16,21 +16,22 @@ export const sel = {
   tickSpacing: selector('tickSpacing()'),
   tokenOfOwnerByIndex: selector('tokenOfOwnerByIndex(address,uint256)'),
   positions: selector('positions(uint256)'),
-  gauges: selector('gauges(address)'),
+  gauge: selector('gauge()'),
   stakedValues: selector('stakedValues(address)'),
   nft: selector('nft()'),
 };
 
-// Velodrome/Aerodrome Reward.sol (verified on-chain — BOTH address args are
-// indexed: topic0=sig, topic1=from, topic2=reward, data[0]=amount):
-//   event ClaimRewards(address indexed from, address indexed reward, uint256 amount);
-export const CLAIM_REWARDS_SIG = 'ClaimRewards(address,address,uint256)';
-export const topicClaimRewards = topic0(CLAIM_REWARDS_SIG);
+// Aero MetaDEX03 VotingRewardsManager. Fees are defined for identification
+// and negative fixtures ONLY; claimed always excludes ClaimFees.
+export const CLAIM_FEES_SIG = 'ClaimFees(uint256,address,address,uint256)';
+export const CLAIM_INCENTIVES_SIG = 'ClaimIncentives(uint256,address,uint256,uint256)';
+export const INCENTIVE_CREATED_SIG = 'IncentiveCreated(uint256,address,address,uint256,uint48,uint48)';
+export const topicClaimFees = topic0(CLAIM_FEES_SIG);
+export const topicClaimIncentives = topic0(CLAIM_INCENTIVES_SIG);
+export const topicIncentiveCreated = topic0(INCENTIVE_CREATED_SIG);
 
-// Aerodrome PoolFactory:
-//   event PoolCreated(address indexed token0, address indexed token1,
-//                     bool indexed stable, address pool, uint256 length);
-export const topicPoolCreated = topic0('PoolCreated(address,address,bool,address,uint256)');
+// Aero CLFactory: indexed token0, token1, int24 tickSpacing; data[0] = pool.
+export const topicPoolCreated = topic0('PoolCreated(address,address,int24,address)');
 
 /** Left-pad a 20-byte address to a 32-byte ABI word (no 0x). */
 export function encAddress(addr) {
