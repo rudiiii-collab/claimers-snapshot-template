@@ -5,6 +5,8 @@
 import * as abi from '../public/js/abi.js';
 import { selector, topic0 } from '../public/js/keccak.js';
 import { chartShares, legendHTML } from '../public/js/chart.js';
+import { attributeClaimed } from '../public/js/attribution.js';
+import { totalsFromRows } from '../public/js/snapshot.js';
 import {
   sel, topicPoolCreated, callDataBalanceOf, dataWords,
   signedTick, decodeUintArray, encAddress,
@@ -14,7 +16,7 @@ import {
 } from '../public/js/multicall.js';
 import { getSqrtRatioAtTick, positionAmounts, Q96 } from '../public/js/v3math.js';
 import { importClaimers, parseCSV, decimalToRaw, cumulativeClaimed, claimersFromEvents } from '../public/js/claims.js';
-import { formatUnits, buildDuneCSV } from '../public/js/csv.js';
+import { formatUnits, buildDuneCSV, buildTimeseriesCSV } from '../public/js/csv.js';
 
 let failures = 0;
 function eq(name, got, want) {
@@ -160,8 +162,26 @@ eq('decimalToRaw sci', decimalToRaw('1.7e+8', 18), 170000000000000000000000000n)
     rows: [{ wallet: '0xa', claimed: 172000000000000000000000000n, hold: 1000000000000000000n, lp: 0n }],
   }], 18, 'TEA');
   eq('duneCSV no scientific notation', /[0-9]e[+-]?[0-9]/i.test(csvText), false);
-  eq('duneCSV header', csvText.split('\r\n')[0], 'block,timestamp,wallet,partner,claimed,TEA_LP,TEA_Hold,outflow');
-  eq('duneCSV outflow', csvText.split('\r\n')[1].split(',')[7], '171999999');
+  eq('duneCSV explicit raw and attributed header', csvText.split('\r\n')[0],
+    'block,timestamp,wallet,partner,claimed,TEA_LP_raw,TEA_Hold_raw,TEA_LP_attributed,TEA_Hold_attributed,retained,outflow,excess_exposure');
+  eq('duneCSV positive outflow', csvText.split('\r\n')[1].split(',')[10], '171999999');
+
+  const excessCSV = buildDuneCSV([{
+    block: 1n, timestamp: 0,
+    rows: [{ wallet: '0xb', claimed: 100n, hold: 50n, lp: 400n }],
+  }], 0, 'RSGP');
+  const excessColumns = excessCSV.split('\r\n')[1].split(',');
+  eq('duneCSV excess wallet outflow clamps per wallet', excessColumns[10], '0');
+  eq('duneCSV exports attributed LP', excessColumns[7], '88');
+  eq('duneCSV exports attributed Hold', excessColumns[8], '12');
+  eq('duneCSV exports excess exposure', excessColumns[11], '350');
+
+  const seriesCSV = buildTimeseriesCSV([totalsFromRows(1n, 0, [
+    { claimed: 100n, hold: 50n, lp: 400n },
+    { claimed: 100n, hold: 30n, lp: 20n },
+  ])], 0);
+  eq('timeseriesCSV uses attributed categories', seriesCSV.split('\r\n')[1],
+    '1,,200,108,42,150,50,420,80,350');
 }
 
 // ---- CSV parser quoting ----
@@ -172,20 +192,52 @@ eq('encAddress', encAddress('0xA1A0b2e02b0e6830AD5a4a7211691200945d8919'),
   '000000000000000000000000a1a0b2e02b0e6830ad5a4a7211691200945d8919');
 eq('dataWords', dataWords('0x' + wordUint(1) + wordUint(2)).length, 2);
 
-const shareFixture = {
-  claimed: 165750115405224905335324n,
-  hold: 60532111582117846096331n,
-  lp: 55105008916621963815606n,
-  outflow: 50112994906485095423387n,
-};
-eq('chart share Hold', chartShares(shareFixture).hold, '36.52%');
-eq('chart share LP', chartShares(shareFixture).lp, '33.25%');
-eq('chart share Transfer out', chartShares(shareFixture).outflow, '30.23%');
-eq('chart zero-claimed share', chartShares({ claimed: 0n, hold: 1n, lp: 2n, outflow: -3n }).hold, '0.00%');
-const percentageLegend = legendHTML('RSGP', shareFixture);
-eq('chart legend includes LP percentage', percentageLegend.includes('33.25%'), true);
-eq('chart legend includes Hold percentage', percentageLegend.includes('36.52%'), true);
-eq('chart legend includes Transfer out percentage', percentageLegend.includes('30.23%'), true);
+// ---- claimed-token attribution: never net one wallet's excess exposure
+// against another wallet's positive outflow. LP/Hold split retained claims in
+// proportion to the wallet's current raw exposure.
+const excessExposure = attributeClaimed({ claimed: 100n, lp: 400n, hold: 50n });
+eq('attribution caps retained at claimed', excessExposure.retained, 100n);
+eq('attribution proportional LP', excessExposure.attributedLp, 88n);
+eq('attribution assigns exact remainder to Hold', excessExposure.attributedHold, 12n);
+eq('attribution excess wallet has no outflow', excessExposure.attributedOutflow, 0n);
+eq('attribution records external excess', excessExposure.excessExposure, 350n);
+
+const positiveOutflow = attributeClaimed({ claimed: 100n, lp: 20n, hold: 30n });
+eq('attribution preserves raw LP below claimed', positiveOutflow.attributedLp, 20n);
+eq('attribution preserves raw Hold below claimed', positiveOutflow.attributedHold, 30n);
+eq('attribution keeps positive wallet outflow', positiveOutflow.attributedOutflow, 50n);
+
+const zeroExposure = attributeClaimed({ claimed: 100n, lp: 0n, hold: 0n });
+eq('attribution zero exposure is full outflow', zeroExposure.attributedOutflow, 100n);
+eq('attribution zero exposure retains nothing', zeroExposure.retained, 0n);
+const zeroClaim = attributeClaimed({ claimed: 0n, lp: 400n, hold: 50n });
+eq('attribution zero claim assigns no LP', zeroClaim.attributedLp, 0n);
+eq('attribution zero claim records all exposure as excess', zeroClaim.excessExposure, 450n);
+const singleWei = attributeClaimed({ claimed: 3n, lp: 1n, hold: 2n });
+eq('attribution single-wei proportional LP', singleWei.attributedLp, 1n);
+eq('attribution single-wei remainder Hold', singleWei.attributedHold, 2n);
+
+const attributedTotals = totalsFromRows(1n, 0, [
+  { claimed: 100n, lp: 400n, hold: 50n },
+  { claimed: 100n, lp: 20n, hold: 30n },
+]);
+eq('totals do not net positive outflow against excess exposure', attributedTotals.attributedOutflow, 50n);
+eq('attributed totals conserve claimed',
+  attributedTotals.attributedLp + attributedTotals.attributedHold + attributedTotals.attributedOutflow,
+  attributedTotals.claimed);
+
+eq('chart allocation share LP', chartShares(attributedTotals, 'allocation').lp, '54.00%');
+eq('chart allocation share Hold', chartShares(attributedTotals, 'allocation').hold, '21.00%');
+eq('chart allocation share Outflow', chartShares(attributedTotals, 'allocation').outflow, '25.00%');
+eq('chart allocation shares total exactly 100%',
+  chartShares(attributedTotals, 'allocation').basisPointsTotal, 10000);
+eq('chart retention share retained', chartShares(attributedTotals, 'retention').retained, '75.00%');
+eq('chart retention share Outflow', chartShares(attributedTotals, 'retention').outflow, '25.00%');
+const percentageLegend = legendHTML('RSGP', attributedTotals, 'allocation');
+eq('chart legend includes LP percentage', percentageLegend.includes('54.00%'), true);
+eq('chart legend includes Hold percentage', percentageLegend.includes('21.00%'), true);
+eq('chart legend calls residual Outflow', percentageLegend.includes('Outflow'), true);
+eq('chart legend never calls residual Transfer out', percentageLegend.includes('Transfer out'), false);
 
 try {
   const { runAeroTests } = await import('./aero.test.mjs');

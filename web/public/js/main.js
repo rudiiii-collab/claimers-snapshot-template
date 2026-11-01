@@ -6,6 +6,7 @@ import { tokenInfo, discoverPools } from './pools.js';
 import { topicPoolCreated, lower } from './abi.js';
 import { renderChart, legendHTML } from './chart.js';
 import { formatUnits, buildDuneCSV, buildTimeseriesCSV, downloadCSV } from './csv.js';
+import { attributeClaimed } from './attribution.js';
 import * as store from './store.js';
 
 // Chain presets. "Custom" clears the chain-specific fields.
@@ -46,6 +47,7 @@ let claimersCSVText = null;
 let lastResult = null;
 let lastConfig = null;
 let abortController = null;
+let chartMode = 'allocation';
 
 // ---- form persistence -------------------------------------------------------
 
@@ -167,6 +169,23 @@ function setError(msg) { $('error-line').textContent = msg || ''; }
 
 // ---- results rendering ------------------------------------------------------
 
+function renderActiveChart() {
+  if (!lastResult || !lastConfig) return;
+  const latestPoint = lastResult.series[lastResult.series.length - 1] || null;
+  $('legend').innerHTML = legendHTML(lastConfig.symbol, latestPoint, chartMode);
+  renderChart($('chart'), lastResult.series, lastConfig.decimals, chartMode);
+}
+
+function setChartMode(mode) {
+  chartMode = mode === 'retention' ? 'retention' : 'allocation';
+  const allocation = chartMode === 'allocation';
+  $('chart-mode-allocation').setAttribute('aria-pressed', String(allocation));
+  $('chart-mode-retention').setAttribute('aria-pressed', String(!allocation));
+  $('chart-mode-allocation').classList.toggle('active', allocation);
+  $('chart-mode-retention').classList.toggle('active', !allocation);
+  renderActiveChart();
+}
+
 function renderResults(result, cfg) {
   lastResult = result;
   lastConfig = cfg;
@@ -176,9 +195,7 @@ function renderResults(result, cfg) {
     .map((p) => `pool ${p.address}: ${cfg.symbol || 'token'} is token${p.tokenIsToken0 ? '0' : '1'}`)
     .join(' · ') + ` · ${result.claimers.length} claimers > ${cfg.minClaimed} ${cfg.symbol || ''}`;
 
-  const latestPoint = result.series[result.series.length - 1] || null;
-  $('legend').innerHTML = legendHTML(cfg.symbol, latestPoint);
-  renderChart($('chart'), result.series, cfg.decimals);
+  renderActiveChart();
 
   // Block selector for the per-wallet table (default: last block).
   const sel = $('block-select');
@@ -204,10 +221,11 @@ function renderWalletTable() {
   tbody.innerHTML = '';
   for (const r of rows) {
     const tr = document.createElement('tr');
-    const outflow = r.claimed - r.hold - r.lp;
+    const attributed = attributeClaimed(r);
     tr.innerHTML =
       `<td>${r.wallet}</td><td>${fmt(r.claimed)}</td><td>${fmt(r.hold)}</td>` +
-      `<td>${fmt(r.lp)}</td><td>${fmt(outflow)}</td>`;
+      `<td>${fmt(r.lp)}</td><td>${fmt(attributed.attributedOutflow)}</td>` +
+      `<td>${fmt(attributed.excessExposure)}</td>`;
     tbody.appendChild(tr);
   }
 }
@@ -324,6 +342,8 @@ function init() {
     $('progress').classList.add('active');
   });
   $('block-select').addEventListener('change', renderWalletTable);
+  $('chart-mode-allocation').addEventListener('click', () => setChartMode('allocation'));
+  $('chart-mode-retention').addEventListener('click', () => setChartMode('retention'));
   $('btn-dl-dune').addEventListener('click', () => {
     if (!lastResult) return;
     downloadCSV(`dune_${(lastConfig.symbol || 'token').toLowerCase()}_claimers.csv`,

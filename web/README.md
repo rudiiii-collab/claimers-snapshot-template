@@ -3,7 +3,8 @@
 A browser UI for building an **incentive-only** claimers snapshot from Aero
 MetaDEX03 on Base. It discovers matching `IncentiveCreated` programs, counts
 only `ClaimIncentives` events (`ClaimFees` are excluded), and produces the
-stacked-area chart (`LP` / `Hold` / `outflow` with cumulative `claimed`), a
+stacked-area chart (`LP` / `Hold` / `Outflow` attributed to cumulative
+`claimed`, with a `Retained` / `Outflow` toggle), a
 per-wallet table, and a Dune-ready CSV download.
 
 All compute runs in the browser with exact `BigInt` arithmetic. Historical
@@ -53,6 +54,30 @@ The form is prefilled with the RSGP incentive program example:
 
 The bundled Base preset uses RSGP, its VotingRewardsManager, and its Aero CL
 RSGP/USDC pool. `ClaimFees` never contribute to `claimed`.
+
+### Claim attribution and chart percentages
+
+Raw wallet LP + Hold can exceed claimed because wallets may acquire the token
+outside the incentive claim. The chart therefore attributes claimed tokens per
+wallet instead of netting signed residuals across wallets:
+
+```text
+exposure = raw LP + raw Hold
+retained = min(claimed, exposure)
+outflow  = claimed - retained
+LP attributed   = retained * raw LP / exposure
+Hold attributed = retained - LP attributed
+```
+
+If exposure is zero, the wallet's full claimed amount is Outflow. This preserves
+`LP attributed + Hold attributed + Outflow = claimed` exactly for every wallet.
+Displayed percentages use exact basis-point remainder allocation and always sum
+to 100.00%. Raw LP/Hold and exposure above claims remain visible in tooltips and
+CSV exports; they are not mislabeled as claimed-token percentages.
+
+The Dune CSV exports explicit `*_raw`, `*_attributed`, `retained`, `outflow`,
+and `excess_exposure` columns. Outflow is non-negative and computed per wallet,
+so one wallet's excess exposure never cancels another wallet's outflow.
 
 ### Provider note
 

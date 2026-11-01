@@ -15,6 +15,7 @@ import { sel, callDataBalanceOf, parseReserves } from './abi.js';
 import { multiCall, resultUint } from './multicall.js';
 import { loadCLPool, snapshotCLLP } from './v3pos.js';
 import { cumulativeClaimed } from './claims.js';
+import { attributeClaimed } from './attribution.js';
 
 /**
  * totalSupply + token-side reserve for each v2 pool at `block`, one Multicall3
@@ -110,15 +111,27 @@ export async function computeSnapshot(client, cfg, claimers, pools, block, event
   return rows;
 }
 
-/** Aggregate a snapshot's rows into time-series totals (BigInt raw sums). */
+/** Aggregate raw exposure and claimed-attributed chart totals per snapshot. */
 export function totalsFromRows(block, timestamp, rows) {
   let claimed = 0n, hold = 0n, lp = 0n;
+  let attributedLp = 0n, attributedHold = 0n, attributedOutflow = 0n;
+  let retained = 0n, excessExposure = 0n;
   for (const r of rows) {
     claimed += r.claimed;
     hold += r.hold;
     lp += r.lp;
+    const attributed = attributeClaimed(r);
+    attributedLp += attributed.attributedLp;
+    attributedHold += attributed.attributedHold;
+    attributedOutflow += attributed.attributedOutflow;
+    retained += attributed.retained;
+    excessExposure += attributed.excessExposure;
   }
-  return { block, timestamp, claimed, hold, lp, outflow: claimed - hold - lp };
+  return {
+    block, timestamp, claimed, hold, lp,
+    attributedLp, attributedHold, attributedOutflow,
+    retained, excessExposure,
+  };
 }
 
 /**

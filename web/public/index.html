@@ -159,6 +159,16 @@
       <button type="button" class="small" id="btn-dl-series">Download timeseries CSV</button>
     </div>
     <div class="pool-summary" id="pool-summary"></div>
+    <div class="chart-controls" role="group" aria-label="Chart mode">
+      <button type="button" class="small active" id="chart-mode-allocation" aria-pressed="true">LP / Hold / Outflow</button>
+      <button type="button" class="small" id="chart-mode-retention" aria-pressed="false">Retained / Outflow</button>
+    </div>
+    <div class="attribution-note">
+      Chart values represent claimed-token attribution, not unlimited raw wallet exposure.
+      Per wallet, retained claims are capped at claimed; when current LP + Hold exceeds claimed,
+      retained claims are split proportionally using that wallet's raw LP:Hold exposure.
+      Outflow is calculated per wallet and never offset by another wallet's excess exposure.
+    </div>
     <div class="legend" id="legend"></div>
     <div id="chart"></div>
 
@@ -170,7 +180,7 @@
     <div class="table-scroll">
       <table id="wallet-table">
         <thead>
-          <tr><th>Wallet</th><th>Claimed</th><th>Hold</th><th>LP</th><th>Outflow</th></tr>
+          <tr><th>Wallet</th><th>Claimed</th><th>Hold raw</th><th>LP raw</th><th>Outflow</th><th>Excess exposure</th></tr>
         </thead>
         <tbody></tbody>
       </table>

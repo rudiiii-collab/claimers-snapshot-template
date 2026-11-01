@@ -144,4 +144,15 @@ export async function runUIConfigTests() {
   assert.doesNotMatch(field('pools-note').textContent, /stable/);
   assert.ok(document.radios.some((r) => r.value === 'csv'), 'reference CSV source remains');
   console.log('PASS UI incentive-only labels and CL discovery tickSpacing');
+
+  assert.ok(field('chart-mode-allocation'), 'LP/Hold/Outflow chart mode button exists');
+  assert.ok(field('chart-mode-retention'), 'Retained/Outflow chart mode button exists');
+  assert.match(html, /split proportionally/i, 'attribution rule is disclosed in the UI');
+  ui.setChartMode('retention');
+  assert.equal(field('chart-mode-allocation').attributes['aria-pressed'], 'false');
+  assert.equal(field('chart-mode-retention').attributes['aria-pressed'], 'true');
+  ui.setChartMode('allocation');
+  assert.equal(field('chart-mode-allocation').attributes['aria-pressed'], 'true');
+  assert.equal(field('chart-mode-retention').attributes['aria-pressed'], 'false');
+  console.log('PASS UI chart mode toggle and attribution disclosure');
 }

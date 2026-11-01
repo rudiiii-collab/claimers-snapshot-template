@@ -20,25 +20,50 @@ function fmtFull(v) {
   return v.toLocaleString('en-US', { maximumFractionDigits: 2 });
 }
 
-/** Exact two-decimal percentage of claimed, without Number precision loss. */
-function sharePercent(value, claimed) {
-  const total = BigInt(claimed ?? 0n);
-  let part = BigInt(value ?? 0n);
-  if (total <= 0n) return '0.00%';
-  if (part < 0n) part = 0n;
-  const hundredths = (part * 10000n + total / 2n) / total;
-  const whole = hundredths / 100n;
-  const frac = (hundredths % 100n).toString().padStart(2, '0');
-  return `${whole}.${frac}%`;
+function fmtBasisPoints(bp) {
+  const whole = Math.floor(bp / 100);
+  return `${whole}.${String(bp % 100).padStart(2, '0')}%`;
 }
 
-/** LP/Hold/Transfer-out shares of claimed for one snapshot point. */
-export function chartShares(point) {
-  return {
-    lp: sharePercent(point.lp, point.claimed),
-    hold: sharePercent(point.hold, point.claimed),
-    outflow: sharePercent(point.outflow, point.claimed),
-  };
+/**
+ * Allocate exactly 10,000 basis points across non-negative BigInt values.
+ * Largest remainders receive the leftover basis points, so displayed shares
+ * always total exactly 100.00% whenever the denominator is positive.
+ */
+function exactShares(entries, total) {
+  total = BigInt(total ?? 0n);
+  if (total <= 0n) {
+    return Object.fromEntries([...entries.map(([key]) => [key, '0.00%']), ['basisPointsTotal', 0]]);
+  }
+  const parts = entries.map(([key, raw], index) => {
+    const value = BigInt(raw ?? 0n) > 0n ? BigInt(raw) : 0n;
+    const scaled = value * 10000n;
+    return { key, index, bp: Number(scaled / total), remainder: scaled % total };
+  });
+  let left = 10000 - parts.reduce((sum, p) => sum + p.bp, 0);
+  const ranked = [...parts].sort((a, b) => {
+    if (a.remainder === b.remainder) return a.index - b.index;
+    return a.remainder > b.remainder ? -1 : 1;
+  });
+  for (let i = 0; i < left; i++) ranked[i % ranked.length].bp++;
+  const result = Object.fromEntries(parts.map((p) => [p.key, fmtBasisPoints(p.bp)]));
+  result.basisPointsTotal = parts.reduce((sum, p) => sum + p.bp, 0);
+  return result;
+}
+
+/** Claimed-token shares for allocation or retained/outflow chart mode. */
+export function chartShares(point, mode = 'allocation') {
+  if (mode === 'retention') {
+    return exactShares([
+      ['retained', point.retained],
+      ['outflow', point.attributedOutflow],
+    ], point.claimed);
+  }
+  return exactShares([
+    ['lp', point.attributedLp],
+    ['hold', point.attributedHold],
+    ['outflow', point.attributedOutflow],
+  ], point.claimed);
 }
 
 function escapeHTML(value) {
@@ -75,19 +100,24 @@ function el(name, attrs, parent) {
  * Render the series into `container` (cleared first).
  * series: [{block, timestamp, claimed, hold, lp, outflow}] with BigInt raw values.
  */
-export function renderChart(container, series, decimals) {
+export function renderChart(container, series, decimals, mode = 'allocation') {
   container.innerHTML = '';
   if (!series.length) return;
 
   const pts = series.map((s) => {
-    const shares = chartShares(s);
+    const shares = chartShares(s, mode);
+    const values = mode === 'retention'
+      ? { retained: s.retained, outflow: s.attributedOutflow }
+      : { lp: s.attributedLp, hold: s.attributedHold, outflow: s.attributedOutflow };
     return {
       block: s.block.toString(),
       ts: s.timestamp || 0,
-      lp: Math.max(0, unitsToNumber(s.lp, decimals)),
-      hold: Math.max(0, unitsToNumber(s.hold, decimals)),
-      outflow: Math.max(0, unitsToNumber(s.outflow, decimals)),
+      values: Object.fromEntries(Object.entries(values)
+        .map(([key, value]) => [key, Math.max(0, unitsToNumber(value, decimals))])),
       claimed: unitsToNumber(s.claimed, decimals),
+      rawLp: Math.max(0, unitsToNumber(s.lp, decimals)),
+      rawHold: Math.max(0, unitsToNumber(s.hold, decimals)),
+      excessExposure: Math.max(0, unitsToNumber(s.excessExposure, decimals)),
       shares,
     };
   });
@@ -97,11 +127,16 @@ export function renderChart(container, series, decimals) {
   const iw = W - M.left - M.right;
   const ih = H - M.top - M.bottom;
 
-  const yMax = Math.max(...pts.map((p) => p.lp + p.hold + p.outflow), 1e-9) * 1.05;
+  const yMax = Math.max(...pts.map((p) => Object.values(p.values).reduce((a, b) => a + b, 0)), 1e-9) * 1.05;
   const x = (i) => M.left + (pts.length === 1 ? iw / 2 : (i / (pts.length - 1)) * iw);
   const y = (v) => M.top + ih - (v / yMax) * ih;
 
-  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, role: 'img', 'aria-label': 'Stacked area chart of LP, Hold and Outflow over time' });
+  const svg = el('svg', {
+    viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, role: 'img',
+    'aria-label': mode === 'retention'
+      ? 'Stacked area chart of Retained and Outflow over time'
+      : 'Stacked area chart of claimed-token LP, Hold and Outflow over time',
+  });
   container.appendChild(svg);
 
   // Gridlines + Y ticks (hairline, recessive).
@@ -126,15 +161,17 @@ export function renderChart(container, series, decimals) {
   // Stack: lp (bottom) -> hold -> outflow (top). Between bands: a 2px
   // surface-color stroke (the "surface gap"); each band's top edge gets a 2px
   // line in its series color.
-  const bands = [
-    { key: 'lp', cls: 's1' },
-    { key: 'hold', cls: 's2' },
-    { key: 'outflow', cls: 's3' },
-  ];
+  const bands = mode === 'retention'
+    ? [{ key: 'retained', label: 'Retained', cls: 's2' }, { key: 'outflow', label: 'Outflow', cls: 's3' }]
+    : [
+        { key: 'lp', label: 'LP attributed', cls: 's1' },
+        { key: 'hold', label: 'Hold attributed', cls: 's2' },
+        { key: 'outflow', label: 'Outflow', cls: 's3' },
+      ];
   const cum = pts.map(() => 0);
   for (const band of bands) {
     const lower = cum.slice();
-    for (let i = 0; i < pts.length; i++) cum[i] += pts[i][band.key];
+    for (let i = 0; i < pts.length; i++) cum[i] += pts[i].values[band.key];
     let dTop = '', dBottomRev = '';
     for (let i = 0; i < pts.length; i++) dTop += `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(cum[i]).toFixed(1)}`;
     for (let i = pts.length - 1; i >= 0; i--) dBottomRev += `L${x(i).toFixed(1)},${y(lower[i]).toFixed(1)}`;
@@ -167,18 +204,23 @@ export function renderChart(container, series, decimals) {
     cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
     cross.setAttribute('visibility', 'visible');
     let acc = 0;
-    [p.lp, p.hold, p.outflow].forEach((v, bi) => {
+    bands.map((band) => p.values[band.key]).forEach((v, bi) => {
       acc += v;
       dots[bi].setAttribute('cx', x(i));
       dots[bi].setAttribute('cy', y(acc));
       dots[bi].setAttribute('visibility', 'visible');
     });
+    const categoryRows = bands.map((band) =>
+      `<div><span class="key ${band.cls}"></span>${band.label} ` +
+      `<b>${fmtFull(p.values[band.key])} <span class="tip-pct">${p.shares[band.key]}</span></b></div>`
+    ).join('');
     tip.innerHTML =
       `<div class="tip-head">${fmtTime(p.ts, p.block)} · block ${p.block}</div>` +
-      `<div><span class="key s1"></span>LP <b>${fmtFull(p.lp)} <span class="tip-pct">${p.shares.lp}</span></b></div>` +
-      `<div><span class="key s2"></span>Hold <b>${fmtFull(p.hold)} <span class="tip-pct">${p.shares.hold}</span></b></div>` +
-      `<div><span class="key s3"></span>Transfer out <b>${fmtFull(p.outflow)} <span class="tip-pct">${p.shares.outflow}</span></b></div>` +
-      `<div class="tip-total">Claimed <b>${fmtFull(p.claimed)}</b></div>`;
+      categoryRows +
+      `<div class="tip-total">Claimed <b>${fmtFull(p.claimed)}</b></div>` +
+      `<div class="tip-raw">Raw current LP <b>${fmtFull(p.rawLp)}</b></div>` +
+      `<div class="tip-raw">Raw current Hold <b>${fmtFull(p.rawHold)}</b></div>` +
+      (p.excessExposure > 0 ? `<div class="tip-raw">Exposure above claims <b>${fmtFull(p.excessExposure)}</b></div>` : '');
     tip.style.display = 'block';
     const cw = container.clientWidth;
     const tx = x(i) / scale; // svg coords -> CSS pixels
@@ -194,13 +236,18 @@ export function renderChart(container, series, decimals) {
   });
 }
 
-/** Legend markup. Percentages describe the latest chart snapshot. */
-export function legendHTML(symbol, latest = null) {
+/** Legend markup. Percentages describe claimed-token attribution at latest snapshot. */
+export function legendHTML(symbol, latest = null, mode = 'allocation') {
   const sym = escapeHTML(symbol ? symbol.toUpperCase() : 'Token');
-  const shares = latest ? chartShares(latest) : null;
+  const shares = latest ? chartShares(latest, mode) : null;
   const pct = (value) => shares ? `<b class="legend-pct">${value}</b>` : '';
+  if (mode === 'retention') {
+    return `
+      <span class="legend-item"><span class="key s2"></span>Retained ${pct(shares?.retained)}</span>
+      <span class="legend-item"><span class="key s3"></span>Outflow ${pct(shares?.outflow)}</span>`;
+  }
   return `
-    <span class="legend-item"><span class="key s1"></span>${sym} in LP ${pct(shares?.lp)}</span>
-    <span class="legend-item"><span class="key s2"></span>${sym} held ${pct(shares?.hold)}</span>
-    <span class="legend-item"><span class="key s3"></span>Transfer out ${pct(shares?.outflow)}</span>`;
+    <span class="legend-item"><span class="key s1"></span>${sym} in LP (attributed) ${pct(shares?.lp)}</span>
+    <span class="legend-item"><span class="key s2"></span>${sym} held (attributed) ${pct(shares?.hold)}</span>
+    <span class="legend-item"><span class="key s3"></span>Outflow ${pct(shares?.outflow)}</span>`;
 }

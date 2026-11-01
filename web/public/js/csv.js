@@ -6,6 +6,8 @@
 // charts. Because we format straight from BigInt base units, output here can
 // never be scientific.
 
+import { attributeClaimed } from './attribution.js';
+
 /** raw base units (BigInt, may be negative) -> plain decimal string. */
 export function formatUnits(raw, decimals) {
   const neg = raw < 0n;
@@ -35,7 +37,8 @@ export function toCSV(header, rows) {
 
 /**
  * The merged Dune-ready CSV (mirrors export-dune):
- *   block,timestamp,wallet,partner,claimed,<SYM>_LP,<SYM>_Hold,outflow
+ *   block,timestamp,wallet,partner,claimed, raw exposure, attributed claim
+ *   allocation, retained, positive outflow, and exposure above claims.
  * One row per wallet per block; partner is blank (hand-labeled upstream).
  */
 export function buildDuneCSV(snapshots, decimals, symbol) {
@@ -43,7 +46,7 @@ export function buildDuneCSV(snapshots, decimals, symbol) {
   const rows = [];
   for (const snap of snapshots) {
     for (const r of snap.rows) {
-      const outflow = r.claimed - r.hold - r.lp;
+      const attributed = attributeClaimed(r);
       rows.push([
         snap.block.toString(),
         String(snap.timestamp || ''),
@@ -52,27 +55,44 @@ export function buildDuneCSV(snapshots, decimals, symbol) {
         formatUnits(r.claimed, decimals),
         formatUnits(r.lp, decimals),
         formatUnits(r.hold, decimals),
-        formatUnits(outflow, decimals),
+        formatUnits(attributed.attributedLp, decimals),
+        formatUnits(attributed.attributedHold, decimals),
+        formatUnits(attributed.retained, decimals),
+        formatUnits(attributed.attributedOutflow, decimals),
+        formatUnits(attributed.excessExposure, decimals),
       ]);
     }
   }
   return toCSV(
-    ['block', 'timestamp', 'wallet', 'partner', 'claimed', `${sym}_LP`, `${sym}_Hold`, 'outflow'],
+    [
+      'block', 'timestamp', 'wallet', 'partner', 'claimed',
+      `${sym}_LP_raw`, `${sym}_Hold_raw`,
+      `${sym}_LP_attributed`, `${sym}_Hold_attributed`,
+      'retained', 'outflow', 'excess_exposure',
+    ],
     rows,
   );
 }
 
-/** timeseries.csv equivalent: block,timestamp,claimed,lp,hold,outflow. */
+/** Chart-ready attributed series plus transparent raw exposure totals. */
 export function buildTimeseriesCSV(series, decimals) {
   const rows = series.map((s) => [
     s.block.toString(),
     String(s.timestamp || ''),
     formatUnits(s.claimed, decimals),
+    formatUnits(s.attributedLp, decimals),
+    formatUnits(s.attributedHold, decimals),
+    formatUnits(s.retained, decimals),
+    formatUnits(s.attributedOutflow, decimals),
     formatUnits(s.lp, decimals),
     formatUnits(s.hold, decimals),
-    formatUnits(s.outflow, decimals),
+    formatUnits(s.excessExposure, decimals),
   ]);
-  return toCSV(['block', 'timestamp', 'claimed', 'lp', 'hold', 'outflow'], rows);
+  return toCSV([
+    'block', 'timestamp', 'claimed',
+    'lp_attributed', 'hold_attributed', 'retained', 'outflow',
+    'lp_raw', 'hold_raw', 'excess_exposure',
+  ], rows);
 }
 
 export function downloadCSV(filename, text) {
